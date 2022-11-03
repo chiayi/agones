@@ -44,7 +44,7 @@ variable "windows_machine_type" {
 }
 
 variable "name" {
-  default = "agones-tf-cluster"
+  default = "agones-cluster"
 }
 
 variable "values_file" {
@@ -88,6 +88,18 @@ variable "log_level" {
   default = "info"
 }
 
+variable "autoscale" {
+  default = "true"
+}
+
+variable "min_node_count" {
+  default = "1"
+}
+
+variable "max_node_count" {
+  default = "5"
+}
+
 // Note: This is the number of gameserver nodes. The Agones module will automatically create an additional
 // two node pools with 1 node each for "agones-system" and "agones-metrics".
 variable "node_count" {
@@ -124,6 +136,9 @@ module "gke_cluster" {
     "windowsInitialNodeCount" = var.windows_node_count
     "project"                 = var.project
     "network"                 = var.network
+    "autoscale"		      = var.autoscale
+    "minNodeCount"	      = var.min_node_count
+    "maxNodeCount"	      = var.max_node_count
   }
 }
 

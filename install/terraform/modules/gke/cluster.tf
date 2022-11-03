@@ -33,6 +33,9 @@ locals {
   kubernetesVersion       = lookup(var.cluster, "kubernetesVersion", "1.23")
   windowsInitialNodeCount = lookup(var.cluster, "windowsInitialNodeCount", "0")
   windowsMachineType      = lookup(var.cluster, "windowsMachineType", "e2-standard-4")
+  autoscale 		  = lookup(var.cluster, "autoscale", false)
+  minNodeCount		  = lookup(var.cluster, "minNodeCount", "1")
+  maxNodeCount		  = lookup(var.cluster, "maxNodeCount", "5")
 }
 
 # echo command used for debugging purpose
@@ -65,8 +68,16 @@ resource "google_container_cluster" "primary" {
 
   node_pool {
     name       = "default"
-    node_count = local.initialNodeCount
+    node_count = local.autoscale ? null : local.initialNodeCount
     version    = local.kubernetesVersion
+
+    dynamic "autoscaling" {
+      for_each = local.autoscale ? [1] : []
+      content {
+      	min_node_count = local.minNodeCount
+	max_node_count = local.maxNodeCount
+      }
+    }
 
     management {
       auto_upgrade = false
