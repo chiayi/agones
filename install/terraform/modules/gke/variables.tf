@@ -40,6 +40,9 @@ variable "cluster" {
     "kubernetesVersion"       = "1.23"
     "windowsInitialNodeCount" = "0"
     "windowsMachineType"      = "e2-standard-4"
+    "autoscale"		      = false
+    "minNodeCount"	      = "1"
+    "maxNodeCount"	      = "5"
   }
 }
 
