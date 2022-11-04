@@ -44,7 +44,7 @@ variable "windows_machine_type" {
 }
 
 variable "name" {
-  default = "agones-cluster"
+  default = "agones-tf-cluster"
 }
 
 variable "values_file" {
