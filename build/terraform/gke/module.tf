@@ -63,6 +63,11 @@ variable "ping_service_type" {
   default = "LoadBalancer"
 }
 
+variable "location" {
+  default     = "us-west1"
+  description = "The GCP location to create the cluster in"
+}
+
 variable "zone" {
   default     = "us-west1-c"
   description = "The GCP zone to create the cluster in"
@@ -128,6 +133,7 @@ module "gke_cluster" {
 
   cluster = {
     "name"                    = var.name
+    "location"		      = var.location
     "zone"                    = var.zone
     "machineType"             = var.machine_type
     "initialNodeCount"        = var.node_count

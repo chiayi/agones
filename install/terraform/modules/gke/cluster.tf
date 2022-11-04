@@ -23,6 +23,7 @@ data "google_client_config" "default" {}
 # Set values to default if not key was not set in original map
 locals {
   project                 = lookup(var.cluster, "project", "agones")
+  location		  = lookup(var.cluster, "location", "")
   zone                    = lookup(var.cluster, "zone", "us-west1-c")
   name                    = lookup(var.cluster, "name", "test-cluster")
   machineType             = lookup(var.cluster, "machineType", "e2-standard-4")
@@ -59,7 +60,7 @@ resource "null_resource" "test-setting-variables" {
 
 resource "google_container_cluster" "primary" {
   name       = local.name
-  location   = local.zone
+  location   = local.location == "" ? local.zone : local.location
   project    = local.project
   network    = local.network
   subnetwork = local.subnetwork

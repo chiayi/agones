@@ -30,6 +30,7 @@ variable "cluster" {
   type        = map
 
   default = {
+    "location"		      = ""
     "zone"                    = "us-west1-c"
     "name"                    = "test-cluster"
     "machineType"             = "e2-standard-4"
