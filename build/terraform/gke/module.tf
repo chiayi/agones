@@ -64,7 +64,7 @@ variable "ping_service_type" {
 }
 
 variable "location" {
-  default     = "us-west1"
+  default     = ""
   description = "The GCP location to create the cluster in"
 }
 
