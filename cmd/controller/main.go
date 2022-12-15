@@ -80,6 +80,7 @@ const (
 	kubeconfigFlag               = "kubeconfig"
 	allocationBatchWaitTime      = "allocation-batch-wait-time"
 	defaultResync                = 30 * time.Second
+	enableSplitControllerFlag    = "enable-split-controller"
 )
 
 var (
@@ -213,14 +214,14 @@ func main() {
 		ctlConf.MinPort, ctlConf.MaxPort, ctlConf.SidecarImage, ctlConf.AlwaysPullSidecar,
 		ctlConf.SidecarCPURequest, ctlConf.SidecarCPULimit,
 		ctlConf.SidecarMemoryRequest, ctlConf.SidecarMemoryLimit, ctlConf.SdkServiceAccount,
-		kubeClient, kubeInformerFactory, extClient, agonesClient, agonesInformerFactory)
+		kubeClient, kubeInformerFactory, extClient, agonesClient, agonesInformerFactory, ctlConf.SplitController)
 	gsSetController := gameserversets.NewController(wh, health, gsCounter,
-		kubeClient, extClient, agonesClient, agonesInformerFactory)
-	fleetController := fleets.NewController(wh, health, kubeClient, extClient, agonesClient, agonesInformerFactory)
+		kubeClient, extClient, agonesClient, agonesInformerFactory, ctlConf.SplitController)
+	fleetController := fleets.NewController(wh, health, kubeClient, extClient, agonesClient, agonesInformerFactory, ctlConf.SplitController)
 	gasController := gameserverallocations.NewController(api, health, gsCounter, kubeClient, kubeInformerFactory,
 		agonesClient, agonesInformerFactory, 10*time.Second, 30*time.Second, ctlConf.AllocationBatchWaitTime)
 	fasController := fleetautoscalers.NewController(wh, health,
-		kubeClient, extClient, agonesClient, agonesInformerFactory)
+		kubeClient, extClient, agonesClient, agonesInformerFactory, ctlConf.SplitController)
 
 	rs = append(rs,
 		httpsServer, gsCounter, gsController, gsSetController, fleetController, fasController, gasController, server)
@@ -260,6 +261,7 @@ func parseEnvFlags() config {
 	viper.SetDefault(enableStackdriverMetricsFlag, false)
 	viper.SetDefault(stackdriverLabels, "")
 	viper.SetDefault(allocationBatchWaitTime, 500*time.Millisecond)
+	viper.SetDefault(enableSplitControllerFlag, false)
 
 	viper.SetDefault(projectIDFlag, "")
 	viper.SetDefault(numWorkersFlag, 64)
@@ -292,6 +294,8 @@ func parseEnvFlags() config {
 	pflag.Int32(logSizeLimitMBFlag, 1000, "Log file size limit in MB")
 	pflag.String(logLevelFlag, viper.GetString(logLevelFlag), "Agones Log level")
 	pflag.Duration(allocationBatchWaitTime, viper.GetDuration(allocationBatchWaitTime), "Flag to configure the waiting period between allocations batches")
+	// TODO: (Note to self) Create and set env variable
+	pflag.Bool(enableSplitControllerFlag, viper.GetBool(enableSplitControllerFlag), "Flag to split controller and extensions.")
 	cloudproduct.BindFlags()
 	runtime.FeaturesBindFlags()
 	pflag.Parse()
@@ -321,6 +325,7 @@ func parseEnvFlags() config {
 	runtime.Must(viper.BindEnv(logSizeLimitMBFlag))
 	runtime.Must(viper.BindEnv(allocationBatchWaitTime))
 	runtime.Must(viper.BindPFlags(pflag.CommandLine))
+	runtime.Must(viper.BindEnv(enableSplitControllerFlag))
 	runtime.Must(cloudproduct.BindEnv())
 	runtime.Must(runtime.FeaturesBindEnv())
 
@@ -370,6 +375,7 @@ func parseEnvFlags() config {
 		LogSizeLimitMB:          int(viper.GetInt32(logSizeLimitMBFlag)),
 		StackdriverLabels:       viper.GetString(stackdriverLabels),
 		AllocationBatchWaitTime: viper.GetDuration(allocationBatchWaitTime),
+		SplitController:         viper.GetBool(enableSplitControllerFlag),
 	}
 }
 
@@ -398,6 +404,7 @@ type config struct {
 	LogLevel                string
 	LogSizeLimitMB          int
 	AllocationBatchWaitTime time.Duration
+	SplitController         bool
 }
 
 // validate ensures the ctlConfig data is valid.

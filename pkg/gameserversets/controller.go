@@ -66,6 +66,8 @@ const (
 	maxPodPendingCount = 5000
 )
 
+var extensionLogger *logrus.Entry
+
 // Controller is a the GameServerSet controller
 type Controller struct {
 	baseLogger          *logrus.Entry
@@ -90,7 +92,8 @@ func NewController(
 	kubeClient kubernetes.Interface,
 	extClient extclientset.Interface,
 	agonesClient versioned.Interface,
-	agonesInformerFactory externalversions.SharedInformerFactory) *Controller {
+	agonesInformerFactory externalversions.SharedInformerFactory,
+	splitController bool) *Controller {
 
 	gameServers := agonesInformerFactory.Agones().V1().GameServers()
 	gsInformer := gameServers.Informer()
@@ -118,8 +121,9 @@ func NewController(
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	c.recorder = eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "gameserverset-controller"})
 
-	wh.AddHandler("/validate", agonesv1.Kind("GameServerSet"), admissionv1.Create, c.creationValidationHandler)
-	wh.AddHandler("/validate", agonesv1.Kind("GameServerSet"), admissionv1.Update, c.updateValidationHandler)
+	if !splitController {
+		NewExtensions(wh)
+	}
 
 	gsSetInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: c.workerqueue.Enqueue,
@@ -150,6 +154,15 @@ func NewController(
 	return c
 }
 
+// NewExtensions binds the handlers to the webhook outside the initialization of the controller
+// initalizes a new logger for extensions.
+func NewExtensions(wh *webhooks.WebHook) {
+	extensionLogger = runtime.NewLoggerWithSource("GameserversetExtensions")
+
+	wh.AddHandler("/validate", agonesv1.Kind("GameServerSet"), admissionv1.Create, creationValidationHandler)
+	wh.AddHandler("/validate", agonesv1.Kind("GameServerSet"), admissionv1.Update, updateValidationHandler)
+}
+
 // Run the GameServerSet controller. Will block until stop is closed.
 // Runs threadiness number workers to process the rate limited queue
 func (c *Controller) Run(ctx context.Context, workers int) error {
@@ -169,8 +182,8 @@ func (c *Controller) Run(ctx context.Context, workers int) error {
 
 // updateValidationHandler that validates a GameServerSet when is updated
 // Should only be called on gameserverset update operations.
-func (c *Controller) updateValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
-	c.baseLogger.WithField("review", review).Debug("updateValidationHandler")
+func updateValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+	extensionLogger.WithField("review", review).Debug("updateValidationHandler")
 
 	newGss := &agonesv1.GameServerSet{}
 	oldGss := &agonesv1.GameServerSet{}
@@ -201,7 +214,7 @@ func (c *Controller) updateValidationHandler(review admissionv1.AdmissionReview)
 			Details: &details,
 		}
 
-		c.loggerForGameServerSet(newGss).WithField("review", review).Debug("Invalid GameServerSet update")
+		loggerForGameServerSetExtensions(newGss).WithField("review", review).Debug("Invalid GameServerSet update")
 		return review, nil
 	}
 
@@ -210,8 +223,8 @@ func (c *Controller) updateValidationHandler(review admissionv1.AdmissionReview)
 
 // creationValidationHandler that validates a GameServerSet when is created
 // Should only be called on gameserverset create operations.
-func (c *Controller) creationValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
-	c.baseLogger.WithField("review", review).Debug("creationValidationHandler")
+func creationValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+	extensionLogger.WithField("review", review).Debug("creationValidationHandler")
 
 	newGss := &agonesv1.GameServerSet{}
 
@@ -236,10 +249,9 @@ func (c *Controller) creationValidationHandler(review admissionv1.AdmissionRevie
 			Details: &details,
 		}
 
-		c.loggerForGameServerSet(newGss).WithField("review", review).Debug("Invalid GameServerSet update")
+		loggerForGameServerSetExtensions(newGss).WithField("review", review).Debug("Invalid GameServerSet update")
 		return review, nil
 	}
-
 	return review, nil
 }
 
@@ -276,6 +288,18 @@ func (c *Controller) loggerForGameServerSet(gsSet *agonesv1.GameServerSet) *logr
 		gsSetName = gsSet.Namespace + "/" + gsSet.Name
 	}
 	return c.loggerForGameServerSetKey(gsSetName).WithField("gss", gsSet)
+}
+
+func loggerForGameServerSetKeyExtensions(key string) *logrus.Entry {
+	return logfields.AugmentLogEntry(extensionLogger, logfields.GameServerSetKey, key)
+}
+
+func loggerForGameServerSetExtensions(gsSet *agonesv1.GameServerSet) *logrus.Entry {
+	gsSetName := "NilGameServerSet"
+	if gsSet != nil {
+		gsSetName = gsSet.Namespace + "/" + gsSet.Name
+	}
+	return loggerForGameServerSetKeyExtensions(gsSetName).WithField("gss", gsSet)
 }
 
 // syncGameServer synchronises the GameServers for the Set,

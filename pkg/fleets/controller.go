@@ -52,6 +52,8 @@ import (
 	"k8s.io/utils/integer"
 )
 
+var extensionLogger *logrus.Entry
+
 // Controller is a the GameServerSet controller
 type Controller struct {
 	baseLogger          *logrus.Entry
@@ -73,7 +75,8 @@ func NewController(
 	kubeClient kubernetes.Interface,
 	extClient extclientset.Interface,
 	agonesClient versioned.Interface,
-	agonesInformerFactory externalversions.SharedInformerFactory) *Controller {
+	agonesInformerFactory externalversions.SharedInformerFactory,
+	splitController bool) *Controller {
 
 	gameServerSets := agonesInformerFactory.Agones().V1().GameServerSets()
 	gsSetInformer := gameServerSets.Informer()
@@ -100,9 +103,9 @@ func NewController(
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	c.recorder = eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "fleet-controller"})
 
-	wh.AddHandler("/mutate", agonesv1.Kind("Fleet"), admissionv1.Create, c.creationMutationHandler)
-	wh.AddHandler("/validate", agonesv1.Kind("Fleet"), admissionv1.Create, c.creationValidationHandler)
-	wh.AddHandler("/validate", agonesv1.Kind("Fleet"), admissionv1.Update, c.creationValidationHandler)
+	if !splitController {
+		NewExtensions(wh)
+	}
 
 	fInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: c.workerqueue.Enqueue,
@@ -125,12 +128,22 @@ func NewController(
 	return c
 }
 
+// NewExtensions binds the handlers to the webhook outside the initialization of the controller
+// initalizes a new logger for extensions.
+func NewExtensions(wh *webhooks.WebHook) {
+	extensionLogger = runtime.NewLoggerWithSource("FleetsExtensions")
+
+	wh.AddHandler("/mutate", agonesv1.Kind("Fleet"), admissionv1.Create, creationMutationHandler)
+	wh.AddHandler("/validate", agonesv1.Kind("Fleet"), admissionv1.Create, creationValidationHandler)
+	wh.AddHandler("/validate", agonesv1.Kind("Fleet"), admissionv1.Update, creationValidationHandler)
+}
+
 // creationMutationHandler is the handler for the mutating webhook that sets the
 // the default values on the Fleet
 // Should only be called on fleet create operations.
 // nolint:dupl
-func (c *Controller) creationMutationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
-	c.baseLogger.WithField("review", review).Debug("creationMutationHandler")
+func creationMutationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+	extensionLogger.WithField("review", review).Debug("creationMutationHandler")
 
 	obj := review.Request.Object
 	fleet := &agonesv1.Fleet{}
@@ -160,7 +173,7 @@ func (c *Controller) creationMutationHandler(review admissionv1.AdmissionReview)
 		return review, errors.Wrapf(err, "error creating json for patch for Fleet %s", fleet.ObjectMeta.Name)
 	}
 
-	c.loggerForFleet(fleet).WithField("patch", string(jsn)).Debug("patch created!")
+	loggerForFleet(fleet).WithField("patch", string(jsn)).Debug("patch created!")
 
 	pt := admissionv1.PatchTypeJSONPatch
 	review.Response.PatchType = &pt
@@ -171,8 +184,8 @@ func (c *Controller) creationMutationHandler(review admissionv1.AdmissionReview)
 
 // creationValidationHandler that validates a Fleet when it is created
 // Should only be called on Fleet create and Update operations.
-func (c *Controller) creationValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
-	c.baseLogger.WithField("review", review).Debug("creationValidationHandler")
+func creationValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+	extensionLogger.WithField("review", review).Debug("creationValidationHandler")
 
 	obj := review.Request.Object
 	fleet := &agonesv1.Fleet{}
@@ -197,7 +210,7 @@ func (c *Controller) creationValidationHandler(review admissionv1.AdmissionRevie
 			Details: &details,
 		}
 
-		c.loggerForFleet(fleet).WithField("review", review).Warn("Invalid Fleet")
+		loggerForFleet(fleet).WithField("review", review).Warn("Invalid Fleet")
 		return review, nil
 	}
 
@@ -231,6 +244,18 @@ func (c *Controller) loggerForFleet(f *agonesv1.Fleet) *logrus.Entry {
 		fleetName = f.ObjectMeta.Namespace + "/" + f.ObjectMeta.Name
 	}
 	return c.loggerForFleetKey(fleetName).WithField("fleet", f)
+}
+
+func loggerForFleetKey(key string) *logrus.Entry {
+	return logfields.AugmentLogEntry(extensionLogger, logfields.FleetKey, key)
+}
+
+func loggerForFleet(f *agonesv1.Fleet) *logrus.Entry {
+	fleetName := "NilFleet"
+	if f != nil {
+		fleetName = f.ObjectMeta.Namespace + "/" + f.ObjectMeta.Name
+	}
+	return loggerForFleetKey(fleetName).WithField("fleet", f)
 }
 
 // gameServerSetEventHandler enqueues the owning Fleet for this GameServerSet,

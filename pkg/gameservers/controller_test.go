@@ -403,8 +403,6 @@ func TestControllerCreationMutationHandler(t *testing.T) {
 		},
 	}
 
-	c, _ := newFakeController()
-
 	for _, tc := range testCases {
 		t.Run(tc.description, func(t *testing.T) {
 			raw, err := json.Marshal(tc.fixture)
@@ -421,7 +419,8 @@ func TestControllerCreationMutationHandler(t *testing.T) {
 				Response: &admissionv1.AdmissionResponse{Allowed: true},
 			}
 
-			result, err := c.creationMutationHandler(review)
+			// result, err := c.creationMutationHandler(review)
+			result, err := creationMutationHandler(review)
 
 			assert.NoError(t, err)
 			if tc.expected.nilPatch {
@@ -452,7 +451,8 @@ func TestControllerCreationMutationHandler(t *testing.T) {
 func TestControllerCreationValidationHandler(t *testing.T) {
 	t.Parallel()
 
-	c, _ := newFakeController()
+	wh := webhooks.NewWebHook(http.NewServeMux())
+	newFakeExtensions(wh)
 
 	t.Run("valid gameserver", func(t *testing.T) {
 		fixture := &agonesv1.GameServer{ObjectMeta: metav1.ObjectMeta{Name: "test", Namespace: "default"},
@@ -472,7 +472,7 @@ func TestControllerCreationValidationHandler(t *testing.T) {
 			Response: &admissionv1.AdmissionResponse{Allowed: true},
 		}
 
-		result, err := c.creationValidationHandler(review)
+		result, err := creationValidationHandler(review)
 		require.NoError(t, err)
 		assert.True(t, result.Response.Allowed)
 	})
@@ -505,7 +505,7 @@ func TestControllerCreationValidationHandler(t *testing.T) {
 			Response: &admissionv1.AdmissionResponse{Allowed: true},
 		}
 
-		result, err := c.creationValidationHandler(review)
+		result, err := creationValidationHandler(review)
 		require.NoError(t, err)
 		assert.False(t, result.Response.Allowed)
 		assert.Equal(t, metav1.StatusFailure, review.Response.Result.Status)
@@ -530,7 +530,7 @@ func TestControllerCreationValidationHandler(t *testing.T) {
 			Response: &admissionv1.AdmissionResponse{Allowed: true},
 		}
 
-		_, err = c.creationValidationHandler(review)
+		_, err = creationValidationHandler(review)
 		if assert.Error(t, err) {
 			assert.Equal(t, `error unmarshalling GameServer json after schema validation: "WRONG DATA": json: cannot unmarshal string into Go value of type v1.GameServer`, err.Error())
 		}
@@ -1952,9 +1952,14 @@ func newFakeController() (*Controller, agtesting.Mocks) {
 		10, 20, "sidecar:dev", false,
 		resource.MustParse("0.05"), resource.MustParse("0.1"),
 		resource.MustParse("50Mi"), resource.MustParse("100Mi"), "sdk-service-account",
-		m.KubeClient, m.KubeInformerFactory, m.ExtClient, m.AgonesClient, m.AgonesInformerFactory)
+		m.KubeClient, m.KubeInformerFactory, m.ExtClient, m.AgonesClient, m.AgonesInformerFactory, false)
 	c.recorder = m.FakeRecorder
 	return c, m
+}
+
+// newFakeExtensions initializes the webhooks outside of the controllers.
+func newFakeExtensions(wh *webhooks.WebHook) {
+	NewExtensions(wh)
 }
 
 func newSingleContainerSpec() agonesv1.GameServerSpec {

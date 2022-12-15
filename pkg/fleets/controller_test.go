@@ -412,32 +412,28 @@ func TestControllerCreationValidationHandler(t *testing.T) {
 	t.Parallel()
 
 	t.Run("invalid JSON", func(t *testing.T) {
-		c, _ := newFakeController()
 		raw, err := json.Marshal([]byte(`1`))
 		require.NoError(t, err)
 		review := getAdmissionReview(raw)
 
-		_, err = c.creationValidationHandler(review)
+		_, err = creationValidationHandler(review)
 		assert.EqualError(t, err, "error unmarshalling Fleet json after schema validation: \"MQ==\": json: cannot unmarshal string into Go value of type v1.Fleet")
 	})
 
 	t.Run("invalid fleet", func(t *testing.T) {
-		c, _ := newFakeController()
 		fixture := agonesv1.Fleet{}
 
 		raw, err := json.Marshal(fixture)
 		require.NoError(t, err)
 		review := getAdmissionReview(raw)
 
-		result, err := c.creationValidationHandler(review)
+		result, err := creationValidationHandler(review)
 		require.NoError(t, err)
 		assert.False(t, result.Response.Allowed)
 		assert.Equal(t, "Failure", result.Response.Result.Status)
 	})
 
 	t.Run("valid fleet", func(t *testing.T) {
-		c, _ := newFakeController()
-
 		gsSpec := *defaultGSSpec()
 		f := defaultFixture()
 		f.Spec.Template = gsSpec
@@ -446,7 +442,7 @@ func TestControllerCreationValidationHandler(t *testing.T) {
 		require.NoError(t, err)
 		review := getAdmissionReview(raw)
 
-		result, err := c.creationValidationHandler(review)
+		result, err := creationValidationHandler(review)
 		require.NoError(t, err)
 		assert.True(t, result.Response.Allowed)
 	})
@@ -456,14 +452,13 @@ func TestControllerCreationMutationHandler(t *testing.T) {
 	t.Parallel()
 
 	t.Run("ok scenario", func(t *testing.T) {
-		c, _ := newFakeController()
 		fixture := agonesv1.Fleet{}
 
 		raw, err := json.Marshal(fixture)
 		require.NoError(t, err)
 		review := getAdmissionReview(raw)
 
-		result, err := c.creationMutationHandler(review)
+		result, err := creationMutationHandler(review)
 		require.NoError(t, err)
 		assert.True(t, result.Response.Allowed)
 		assert.Equal(t, admissionv1.PatchTypeJSONPatch, *result.Response.PatchType)
@@ -487,12 +482,11 @@ func TestControllerCreationMutationHandler(t *testing.T) {
 	})
 
 	t.Run("invalid JSON", func(t *testing.T) {
-		c, _ := newFakeController()
 		raw, err := json.Marshal([]byte(`1`))
 		require.NoError(t, err)
 		review := getAdmissionReview(raw)
 
-		result, err := c.creationMutationHandler(review)
+		result, err := creationMutationHandler(review)
 		assert.NoError(t, err)
 		require.Nil(t, result.Response.PatchType)
 	})
@@ -1403,7 +1397,7 @@ func TestControllerRollingUpdateDeployment(t *testing.T) {
 func newFakeController() (*Controller, agtesting.Mocks) {
 	m := agtesting.NewMocks()
 	wh := webhooks.NewWebHook(http.NewServeMux())
-	c := NewController(wh, healthcheck.NewHandler(), m.KubeClient, m.ExtClient, m.AgonesClient, m.AgonesInformerFactory)
+	c := NewController(wh, healthcheck.NewHandler(), m.KubeClient, m.ExtClient, m.AgonesClient, m.AgonesInformerFactory, false)
 	c.recorder = m.FakeRecorder
 	return c, m
 }

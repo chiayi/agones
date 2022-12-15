@@ -94,6 +94,7 @@ agones:
       failureThreshold: 3
       timeoutSeconds: 1
     allocationBatchWaitTime: 500ms
+    enableSplitControllerFlag: false
   ping:
     install: true
     pdb:

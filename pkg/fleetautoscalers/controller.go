@@ -65,6 +65,8 @@ type fasThread struct {
 	cancel     context.CancelFunc
 }
 
+var extensionLogger *logrus.Entry
+
 // Controller is the FleetAutoscaler controller
 //
 //nolint:govet // ignore fieldalignment, singleton
@@ -91,7 +93,8 @@ func NewController(
 	kubeClient kubernetes.Interface,
 	extClient extclientset.Interface,
 	agonesClient versioned.Interface,
-	agonesInformerFactory externalversions.SharedInformerFactory) *Controller {
+	agonesInformerFactory externalversions.SharedInformerFactory,
+	splitController bool) *Controller {
 
 	autoscaler := agonesInformerFactory.Autoscaling().V1().FleetAutoscalers()
 	fleetInformer := agonesInformerFactory.Agones().V1().Fleets()
@@ -116,11 +119,9 @@ func NewController(
 	eventBroadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: kubeClient.CoreV1().Events("")})
 	c.recorder = eventBroadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "fleetautoscaler-controller"})
 
-	kind := autoscalingv1.Kind("FleetAutoscaler")
-	wh.AddHandler("/mutate", kind, admissionv1.Create, c.mutationHandler)
-	wh.AddHandler("/mutate", kind, admissionv1.Update, c.mutationHandler)
-	wh.AddHandler("/validate", kind, admissionv1.Create, c.validationHandler)
-	wh.AddHandler("/validate", kind, admissionv1.Update, c.validationHandler)
+	if !splitController {
+		NewExtensions(wh)
+	}
 
 	autoscaler.Informer().AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj interface{}) {
@@ -150,6 +151,18 @@ func NewController(
 	})
 
 	return c
+}
+
+// NewExtensions binds the handlers to the webhook outside the initialization of the controller
+// initalizes a new logger for extensions.
+func NewExtensions(wh *webhooks.WebHook) {
+	extensionLogger = runtime.NewLoggerWithSource("FleetAutscalerExtensions")
+
+	kind := autoscalingv1.Kind("FleetAutoscaler")
+	wh.AddHandler("/mutate", kind, admissionv1.Create, mutationHandler)
+	wh.AddHandler("/mutate", kind, admissionv1.Update, mutationHandler)
+	wh.AddHandler("/validate", kind, admissionv1.Create, validationHandler)
+	wh.AddHandler("/validate", kind, admissionv1.Update, validationHandler)
 }
 
 // Run the FleetAutoscaler controller. Will block until stop is closed.
@@ -193,7 +206,7 @@ func (c *Controller) loggerForFleetAutoscaler(fas *autoscalingv1.FleetAutoscaler
 
 // creationMutationHandler is the handler for the mutating webhook that sets the
 // the default values on the FleetAutoscaler
-func (c *Controller) mutationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+func mutationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
 	obj := review.Request.Object
 	fas := &autoscalingv1.FleetAutoscaler{}
 	err := json.Unmarshal(obj.Raw, fas)
@@ -229,12 +242,12 @@ func (c *Controller) mutationHandler(review admissionv1.AdmissionReview) (admiss
 
 // validationHandler will intercept when a FleetAutoscaler is created, and
 // validate its settings.
-func (c *Controller) validationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+func validationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
 	obj := review.Request.Object
 	fas := &autoscalingv1.FleetAutoscaler{}
 	err := json.Unmarshal(obj.Raw, fas)
 	if err != nil {
-		c.baseLogger.WithField("review", review).WithError(err).Error("validationHandler")
+		extensionLogger.WithField("review", review).WithError(err).Error("validationHandler")
 		return review, errors.Wrapf(err, "error unmarshalling FleetAutoscaler json after schema validation: %s", obj.Raw)
 	}
 	fas.ApplyDefaults()

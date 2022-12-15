@@ -63,6 +63,8 @@ const (
 	httpPortEnvVar       = "AGONES_SDK_HTTP_PORT"
 )
 
+var extensionLogger *logrus.Entry
+
 // Controller is a the main GameServer crd controller
 //
 //nolint:govet // ignore fieldalignment, singleton
@@ -111,6 +113,7 @@ func NewController(
 	extClient extclientset.Interface,
 	agonesClient versioned.Interface,
 	agonesInformerFactory externalversions.SharedInformerFactory,
+	splitController bool,
 ) *Controller {
 
 	pods := kubeInformerFactory.Core().V1().Pods()
@@ -154,8 +157,9 @@ func NewController(
 	health.AddLivenessCheck("gameserver-creation-workerqueue", healthcheck.Check(c.creationWorkerQueue.Healthy))
 	health.AddLivenessCheck("gameserver-deletion-workerqueue", healthcheck.Check(c.deletionWorkerQueue.Healthy))
 
-	wh.AddHandler("/mutate", agonesv1.Kind("GameServer"), admissionv1.Create, c.creationMutationHandler)
-	wh.AddHandler("/validate", agonesv1.Kind("GameServer"), admissionv1.Create, c.creationValidationHandler)
+	if !splitController {
+		NewExtensions(wh)
+	}
 
 	gsInformer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: c.enqueueGameServerBasedOnState,
@@ -195,6 +199,15 @@ func NewController(
 	return c
 }
 
+// NewExtensions binds the handlers to the webhook outside the initialization of the controller
+// initalizes a new logger for extensions.
+func NewExtensions(wh *webhooks.WebHook) {
+	extensionLogger = runtime.NewLoggerWithSource("GameserversExtensions")
+
+	wh.AddHandler("/mutate", agonesv1.Kind("GameServer"), admissionv1.Create, creationMutationHandler)
+	wh.AddHandler("/validate", agonesv1.Kind("GameServer"), admissionv1.Create, creationValidationHandler)
+}
+
 func (c *Controller) enqueueGameServerBasedOnState(item interface{}) {
 	gs := item.(*agonesv1.GameServer)
 
@@ -224,7 +237,7 @@ func fastRateLimiter() workqueue.RateLimiter {
 // the default values on the GameServer
 // Should only be called on gameserver create operations.
 // nolint:dupl
-func (c *Controller) creationMutationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+func creationMutationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
 	obj := review.Request.Object
 	gs := &agonesv1.GameServer{}
 	err := json.Unmarshal(obj.Raw, gs)
@@ -272,9 +285,21 @@ func (c *Controller) loggerForGameServer(gs *agonesv1.GameServer) *logrus.Entry 
 	return c.loggerForGameServerKey(gsName).WithField("gs", gs)
 }
 
+func loggerForGameServerKeyExtensions(key string) *logrus.Entry {
+	return logfields.AugmentLogEntry(extensionLogger, logfields.GameServerKey, key)
+}
+
+func loggerForGameServerExtension(gs *agonesv1.GameServer) *logrus.Entry {
+	gsName := logfields.NilGameServer
+	if gs != nil {
+		gsName = gs.Namespace + "/" + gs.Name
+	}
+	return loggerForGameServerKeyExtensions(gsName).WithField("gs", gs)
+}
+
 // creationValidationHandler that validates a GameServer when it is created
 // Should only be called on gameserver create operations.
-func (c *Controller) creationValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
+func creationValidationHandler(review admissionv1.AdmissionReview) (admissionv1.AdmissionReview, error) {
 	obj := review.Request.Object
 	gs := &agonesv1.GameServer{}
 	err := json.Unmarshal(obj.Raw, gs)
@@ -282,7 +307,7 @@ func (c *Controller) creationValidationHandler(review admissionv1.AdmissionRevie
 		return review, errors.Wrapf(err, "error unmarshalling GameServer json after schema validation: %s", obj.Raw)
 	}
 
-	c.loggerForGameServer(gs).WithField("review", review).Debug("creationValidationHandler")
+	loggerForGameServerExtension(gs).WithField("review", review).Debug("creationValidationHandler")
 
 	causes, ok := gs.Validate()
 	if !ok {
@@ -300,7 +325,7 @@ func (c *Controller) creationValidationHandler(review admissionv1.AdmissionRevie
 			Details: &details,
 		}
 
-		c.loggerForGameServer(gs).WithField("review", review).Debug("Invalid GameServer")
+		loggerForGameServerExtension(gs).WithField("review", review).Debug("Invalid GameServer")
 		return review, nil
 	}
 
