@@ -45,7 +45,7 @@ agones:
   createPriorityClass: true
   priorityClassName: agones-system
   cloudProduct: "auto"
-  controller:
+  defaultValues: &defaultValues
     resources: {}
       # requests:
       #   cpu: 1
@@ -94,7 +94,10 @@ agones:
       failureThreshold: 3
       timeoutSeconds: 1
     allocationBatchWaitTime: 500ms
+  controller: 
+    <<: *defaultValues
   extensions:
+    <<: *defaultValues
     pdb:
         minAvailable: 1
     replicas: 2
@@ -223,6 +226,7 @@ agones:
     # extensions settings ignored unless `SplitControllerAndExtensions` feature gate is enabled
     extensions:
       name: agones-extensions
+      pullPolicy: IfNotPresent
     sdk:
       name: agones-sdk
       cpuRequest: 30m
