@@ -15674,7 +15674,7 @@ spec:
         - name: SIDECAR_MEMORY_REQUEST
           value: "0"
         - name: SIDECAR_MEMORY_LIMIT
-          value: "0"
+          value: "500Mi"
         - name: SDK_SERVICE_ACCOUNT
           value: "agones-sdk"
         - name: PROMETHEUS_EXPORTER

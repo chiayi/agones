@@ -230,7 +230,7 @@ agones:
       cpuRequest: 30m
       cpuLimit: 0
       memoryRequest: 0
-      memoryLimit: 0
+      memoryLimit: 500Mi
       alwaysPull: false
     ping:
       name: agones-ping

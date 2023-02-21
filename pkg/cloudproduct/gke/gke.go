@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"agones.dev/agones/pkg/apis"
 	agonesv1 "agones.dev/agones/pkg/apis/agones/v1"
@@ -28,6 +29,7 @@ import (
 	"cloud.google.com/go/compute/metadata"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/informers"
 	"k8s.io/client-go/kubernetes"
@@ -41,6 +43,9 @@ const (
 	errPortPolicyMustBeDynamic      = "portPolicy must be Dynamic on GKE Autopilot"
 	errSchedulingMustBePacked       = "scheduling strategy must be Packed on GKE Autopilot"
 	errEvictionSafeOnUpgradeInvalid = "eviction.safe OnUpgrade not supported on GKE Autopilot"
+
+	MiB = 1024 * 1024
+	GiB = MiB * 1024
 )
 
 var logger = runtime.NewLoggerWithSource("gke")
@@ -144,6 +149,7 @@ func (*gkeAutopilot) ValidateScheduling(ss apis.SchedulingStrategy) []metav1.Sta
 
 func (*gkeAutopilot) MutateGameServerPodSpec(gss *agonesv1.GameServerSpec, podSpec *corev1.PodSpec) error {
 	podSpecSeccompUnconfined(podSpec)
+	setMinResourceForAutopilotContainers(podSpec)
 	return nil
 }
 
@@ -159,6 +165,79 @@ func podSpecSeccompUnconfined(podSpec *corev1.PodSpec) {
 		podSpec.SecurityContext = &corev1.PodSecurityContext{}
 	}
 	podSpec.SecurityContext.SeccompProfile = &corev1.SeccompProfile{Type: corev1.SeccompProfileTypeUnconfined}
+}
+
+// setMinResourceForAutopilotContainers increases the gameserver container resources to the autopilot
+// container minimum so autopilot does not increase resources to the sidecar.
+func setMinResourceForAutopilotContainers(podSpec *corev1.PodSpec) {
+	if len(podSpec.Containers) < 2 {
+		return
+	}
+
+	minResourceList := make(corev1.ResourceList)
+
+	var totalCpuResource int64
+	var totalMemResource float64
+	for _, c := range podSpec.Containers {
+		rval := c.Resources.Requests[corev1.ResourceCPU]
+		mval := c.Resources.Requests[corev1.ResourceMemory]
+		totalCpuResource += rval.MilliValue()
+		totalMemResource += float64(mval.Value()) / GiB
+	}
+
+	minResourceList[corev1.ResourceCPU] = *resource.NewMilliQuantity(round(totalCpuResource, 250), resource.DecimalSI)
+	minResourceList[corev1.ResourceMemory] = *resource.NewQuantity(int64(math.Ceil(float64(round(totalCpuResource, 256))*MiB)), resource.BinarySI)
+	minResourceList[corev1.ResourceEphemeralStorage] = resource.MustParse("1Gi")
+
+	extraResources := make(corev1.ResourceList)
+	totalResources := make(corev1.ResourceList)
+
+	for r := range minResourceList {
+		var totalResource int64
+		for _, c := range podSpec.Containers {
+			rval := c.Resources.Requests[r]
+			totalResource += rval.MilliValue()
+		}
+		if r == corev1.ResourceCPU {
+			totalResources[r] = *resource.NewMilliQuantity(totalResource, resource.DecimalSI)
+		} else if r == corev1.ResourceMemory {
+			totalResources[r] = *resource.NewMilliQuantity(totalResource, resource.BinarySI)
+		}
+	}
+
+	for r := range minResourceList {
+		if r == corev1.ResourceEphemeralStorage {
+			continue
+		}
+		totalR := totalResources[r]
+		min := minResourceList[r].DeepCopy()
+		if totalR.Cmp(min) == -1 {
+			min.Sub(totalResources[r])
+			extraResources[r] = min
+		}
+	}
+	for r, extra := range extraResources {
+		containerVal := podSpec.Containers[1].Resources.Requests[r]
+
+		if r == corev1.ResourceCPU {
+			podSpec.Containers[1].Resources.Requests[r] = *resource.NewMilliQuantity(extra.MilliValue()+containerVal.MilliValue(), resource.DecimalSI)
+		} else if r == corev1.ResourceMemory {
+			podSpec.Containers[1].Resources.Requests[r] = *resource.NewQuantity(extra.Value()+containerVal.Value(), resource.BinarySI)
+		}
+	}
+
+	// Ephermeral storage min applies per container
+	for i := range podSpec.Containers {
+		eph := podSpec.Containers[i].Resources.Requests[corev1.ResourceEphemeralStorage]
+		min := minResourceList[corev1.ResourceEphemeralStorage].DeepCopy()
+		if eph.Cmp(min) == -1 {
+			podSpec.Containers[i].Resources.Requests[corev1.ResourceEphemeralStorage] = min
+		}
+	}
+}
+
+func round(x, unit int64) int64 {
+	return int64(math.Ceil(float64(x)/float64(unit))) * unit
 }
 
 // SetEviction sets disruption controls based on GameServer.Status.Eviction. For Autopilot:
